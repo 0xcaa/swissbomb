@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 
-# make nmap command options
-
 
 import argparse
 
+def input_ruby:
 
 def main():
-    print("hi")
+
 
 
 
