@@ -26,7 +26,6 @@ def main():
   print("This is the post URL: ", post_url)
   
   payload = {}
-  payload2 = {}
 
   
   for input_tag in form.find_all("input"):
@@ -35,19 +34,11 @@ def main():
   
       if name:
           payload[name] = value
-      if input_tag.get("type") == "number" and input_tag.has_attr("required"):
+      if not value and input_tag.get("type") == "number" and input_tag.has_attr("required"):
           payload[name] = 20
 
-      if input_tag.get("type") == "text" and input_tag.has_attr("required"):
+      if not value and input_tag.get("type") == "text" and input_tag.has_attr("required"):
           payload[name] = "test"
-# if there already is a predefined value put in another list and do nothign...
-# this will cause problems in future
-  for input_tag in form.find_all("input"):
-      name = input_tag.get("name")
-      value = input_tag.get("value", "")
-  
-      if name:
-          payload2[name] = value
 
   with open("wordlist.txt") as f:
     for x in f:
@@ -64,7 +55,8 @@ def main():
 
             if elapsed > 5:
                 print(f"⚠️ Slow response successuful Ruby SSTI: {elapsed:.2f}s")
-                print("Payload:", encoded)
+                print("Full Payload:", encoded)
+                print("payload: ", x)
                 sys.exit()
             payload[k] = temp
             print(post_response.status_code)
