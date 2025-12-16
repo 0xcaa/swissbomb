@@ -1,0 +1,3 @@
+testfromfile
+<%= IO.popen("sleep 10").readlines() %>
+test%0A<%25%3d+IO.popen("sleep+10").readlines()%25>
