@@ -12,7 +12,19 @@ from urllib.parse import urlencode
 
 # move to separate function but keep generic in main
 
+def cypher():
+  print("hello")
+  url = "http://cypher.htb/login"
+
+
 def main():
+
+
+  cypher()
+  sys.exit()
+
+
+
   session = requests.Session()
 
   url = "http://10.10.11.253/weighted-grade"
