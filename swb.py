@@ -15,28 +15,6 @@ from urllib.parse import urlparse
 
 
 
-def check_ping(hostname) -> bool:
-    print("hostname:",hostname)
-    try:
-        subprocess.check_output(
-            "ping -c 1 " + hostname, shell=True
-        )
-    except Exception:
-        return False
-
-    return True
-
-def parse_arguments():
-
-  parser = argparse.ArgumentParser(
-          prog='swb.py',
-          description='Swissbomb demo',
-          epilog='this is the epilog')
-
-  parser.add_argument('url', help='the URL of your choice: %(prog)s  http://htburl.htb', type=str)
-  parser.add_argument('-t', '--test')
-  args = parser.parse_args()
-  return args
 
 def cypher(url):
 
@@ -69,10 +47,7 @@ def cypher(url):
               time.sleep(1)
 
 
-
-
 def weightedgrade(url):
-
 
   session = requests.Session()
 
@@ -126,6 +101,30 @@ def weightedgrade(url):
             continue
 
 
+def check_ping(hostname) -> bool:
+    print("hostname:",hostname)
+    try:
+        subprocess.check_output(
+            "ping -c 1 " + hostname, shell=True
+        )
+    except Exception:
+        return False
+
+    print('Ping: Success')
+    return True
+
+def parse_arguments():
+
+  parser = argparse.ArgumentParser(
+          prog='swb.py',
+          description='Swissbomb demo',
+          epilog='this is the epilog')
+
+  parser.add_argument('url', help='the URL of your choice: %(prog)s  http://htburl.htb', type=str)
+  parser.add_argument('--noping', help='skip the default ping check', action='store_true')
+  args = parser.parse_args()
+  return args
+
 def main():
 
   args = parse_arguments()
@@ -133,9 +132,12 @@ def main():
   parsed_url = urlparse(url)
   hostname = parsed_url.hostname
 
-  if not check_ping(hostname):
-      print("ping check failed")
-      sys.exit()
+  if args.noping:
+      print("Skipping the ping check")
+  else:
+      if not check_ping(hostname):
+          print("ping check failed")
+          sys.exit()
 
   print('Target:', url)
   time.sleep(5)
