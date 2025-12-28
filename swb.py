@@ -1,21 +1,46 @@
 #!/usr/bin/env python3
 
-
 import sys
 import argparse
 import random
 import time
+import subprocess
+
 import requests 
 from bs4 import BeautifulSoup
 import urllib.parse
 from urllib.parse import urljoin
 from urllib.parse import urlencode
+from urllib.parse import urlparse
 
-# move to separate function but keep generic in main
 
-def cypher():
 
-  url = "http://cypher.htb/login"
+def check_ping(hostname) -> bool:
+    print("hostname:",hostname)
+    try:
+        subprocess.check_output(
+            "ping -c 1 " + hostname, shell=True
+        )
+    except Exception:
+        return False
+
+    return True
+
+def parse_arguments():
+
+  parser = argparse.ArgumentParser(
+          prog='swb.py',
+          description='Swissbomb demo',
+          epilog='this is the epilog')
+
+  parser.add_argument('url', help='the URL of your choice: %(prog)s  http://htburl.htb', type=str)
+  parser.add_argument('-t', '--test')
+  args = parser.parse_args()
+  return args
+
+def cypher(url):
+
+#  url = "http://cypher.htb/login"
 
   session = requests.Session()
   response = session.get(url)
@@ -44,17 +69,14 @@ def cypher():
               time.sleep(1)
 
 
-def main():
 
 
-  cypher()
-  sys.exit()
-
+def weightedgrade(url):
 
 
   session = requests.Session()
 
-  url = "http://10.10.11.253/weighted-grade"
+#  url = "http://10.10.11.253/weighted-grade"
   response = session.get(url)
   
   soup = BeautifulSoup(response.text, "html.parser")
@@ -103,6 +125,26 @@ def main():
         else:
             continue
 
+
+def main():
+
+  args = parse_arguments()
+  url = args.url
+  parsed_url = urlparse(url)
+  hostname = parsed_url.hostname
+
+  if not check_ping(hostname):
+      print("ping check failed")
+      sys.exit()
+
+  print('Target:', url)
+  time.sleep(5)
+    
+# select function to run
+  cypher(url)
+  sys.exit()
+  weightedgrade()
+  sys.exit()
 
 if __name__=="__main__":
     main()
