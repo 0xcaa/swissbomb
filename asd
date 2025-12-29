@@ -1,1 +1,0 @@
-{"data":"","get":"","headers":"","method":"GET","url":"http://cypher.htb/login"}
