@@ -13,7 +13,49 @@ from urllib.parse import urljoin
 from urllib.parse import urlencode
 from urllib.parse import urlparse
 
+BLACK = '\033[30m'
+RED = '\033[31m'
+GREEN = '\033[32m'
+YELLOW = '\033[33m'
+BLUE = '\033[34m'
+MAGENTA = '\033[35m'
+CYAN = '\033[36m'
+LIGHT_GRAY = '\033[37m'
+DARK_GRAY = '\033[90m'
+BRIGHT_RED = '\033[91m'
+BRIGHT_GREEN = '\033[92m'
+BRIGHT_YELLOW = '\033[93m'
+BRIGHT_BLUE = '\033[94m'
+BRIGHT_MAGENTA = '\033[95m'
+BRIGHT_CYAN = '\033[96m'
+WHITE = '\033[97m'
 
+RESET = '\033[0m' # return to standard terminal text color
+
+BACKGROUND_BLACK = '\033[40m'
+BACKGROUND_RED = '\033[41m'
+BACKGROUND_GREEN = '\033[42m'
+BACKGROUND_YELLOW = '\033[43m'
+BACKGROUND_BLUE = '\033[44m'
+BACKGROUND_MAGENTA = '\033[45m'
+BACKGROUND_CYAN = '\033[46m'
+BACKGROUND_LIGHT_GRAY = '\third-party033[47m'
+BACKGROUND_DARK_GRAY = '\033[100m'
+BACKGROUND_BRIGHT_RED = '\033[101m'
+BACKGROUND_BRIGHT_GREEN = '\033[102m'
+BACKGROUND_BRIGHT_YELLOW = '\033[103m'
+BACKGROUND_BRIGHT_BLUE = '\033[104m'
+BACKGROUND_BRIGHT_MAGENTA = '\033[105m'
+BACKGROUND_BRIGHT_CYAN = '\033[106m'
+BACKGROUND_WHITE = '\033[107m'
+
+
+def format_response(response, payload):
+    if response.status_code > 300 and response.status_code < 500:
+        print(RED + str(response.status_code) + RESET)
+    elif response.status_code > 400 and response.status_code < 600:
+        print(YELLOW + str(response.status_code) + RESET)
+    print(response.text, "with:", payload)
 
 
 def cypher(url):
@@ -37,13 +79,11 @@ def cypher(url):
           for u, p in c:
               formatted = f'{{"username":"{word.strip()}","password":"{p}"}}'
               post_response = session.post(post_url, data=formatted, timeout=60)
-              print(post_response.status_code)
-              print(post_response.text, "with:", urllib.parse.quote_plus(formatted))
+              format_response(post_response, urllib.parse.quote_plus(formatted))
               time.sleep(1)
               formatted = f'{{"username":"{u}","password":"{word.strip()}"}}'
               post_response = session.post(post_url, data=formatted, timeout=60)
-              print(post_response.status_code)
-              print(post_response.text, "with:", formatted)
+              format_response(post_response, urllib.parse.quote_plus(formatted))
               time.sleep(1)
 
 
@@ -140,7 +180,7 @@ def main():
           sys.exit()
 
   print('Target:', url)
-  time.sleep(5)
+  time.sleep(2)
     
 # select function to run
   cypher(url)
