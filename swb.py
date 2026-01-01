@@ -243,7 +243,8 @@ def parse_arguments():
 
   parser.add_argument('url', help='the URL of your choice: %(prog)s  http://htburl.htb', type=str)
   parser.add_argument('--noping', help='skip the default ping check', action='store_true')
-  parser.add_argument('--nosub', help='skip dubdomain enumeration', action='store_true')
+  parser.add_argument('--nosub', help='skip subdomain enumeration', action='store_true')
+  parser.add_argument('-t', '--timeout', help='timeout values in seconds', default=5, type=int)
   args = parser.parse_args()
   return args
 
@@ -253,7 +254,8 @@ def main():
   url = args.url
   parsed_url = urlparse(url)
   hostname = parsed_url.hostname
-  timeout = 5
+  timeout = args.timeout
+  print('timeout value: ', timeout)
 
   if args.noping:
       print("Skipping the ping check")
