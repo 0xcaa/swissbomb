@@ -5,8 +5,9 @@ import argparse
 import random
 import time
 import subprocess
+import string
 
-import requests 
+import requests
 from bs4 import BeautifulSoup
 import urllib.parse
 from urllib.parse import urljoin
@@ -50,11 +51,90 @@ BACKGROUND_BRIGHT_CYAN = '\033[106m'
 BACKGROUND_WHITE = '\033[107m'
 
 
+
+##Todo
+# robots.txt vuln checker function
+# git repository finder function
+# pass wordlist as filename to exploit function
+
+def random_subdomain(length: int = 16) -> str:
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
+
+
+def enumerate_subdomain(url: str, domain: str, timeout: int = 5):
+    """
+    :return: dict with existence and wildcard info
+    """
+
+#    target = f"https://{subdomain}.{domain}"
+    target = url
+    # bad http hardcode
+    if "https" in url:
+        random_target = f"https://{random_subdomain()}.{domain}"
+    else:
+        random_target = f"http://{random_subdomain()}.{domain}"
+#    random_target = f"https://{random_subdomain()}.{domain}"
+#    random_target = f"https://test2.{domain}"
+    print(random_target)
+
+    result = {
+        "target": target,
+        "exists": False,
+        "wildcard_detected": False,
+        "status_code": None
+    }
+
+
+    # Wildcard detection
+    try:
+        random_response = requests.get(
+            random_target,
+            timeout=timeout,
+            allow_redirects=True
+        )
+        if random_response.status_code < 500:
+            result["wildcard_detected"] = True
+            result["target"] = True
+            return result
+    except requests.RequestException:
+        pass
+
+
+    # loop through wordlist of subdomains
+    with open("wordlist.txt") as f:
+        for word in f:
+            try:
+                target = f"http://{word.strip()}.{domain}"
+                print(target)
+                response = requests.get(target, timeout=timeout, allow_redirects=True)
+                format_response(response, word)
+                result["status_code"] = response.status_code
+                result["target"] = target
+                print(result)
+
+                # Treat any HTTP response as "exists"
+                if response.status_code < 500:
+                    result["exists"] = True
+                    format_response(response, word)
+                    print(result)
+                else:
+                    print(result)
+
+            except requests.RequestException:
+                print(result)
+                pass
+
+    return result
+
+
 def format_response(response, payload):
     if response.status_code > 300 and response.status_code < 500:
         print(RED + str(response.status_code) + RESET)
     elif response.status_code > 400 and response.status_code < 600:
         print(YELLOW + str(response.status_code) + RESET)
+    elif response.status_code > 100 and response.status_code < 300:
+        print(GREEN + str(response.status_code) + RESET)
+        return
     print(response.text, "with:", payload)
 
 
@@ -64,14 +144,14 @@ def cypher(url):
 
   session = requests.Session()
   response = session.get(url)
-  
+
   soup = BeautifulSoup(response.text, "html.parser")
 
   form = soup.find("form")
   action = form.get("action")
   post_url = urljoin(url, action)
   print("This is the post URL: ", post_url)
-  
+
   c = [("admin", "admin")]
 
   with open("wordlist.txt") as f:
@@ -93,21 +173,21 @@ def weightedgrade(url):
 
 #  url = "http://10.10.11.253/weighted-grade"
   response = session.get(url)
-  
+
   soup = BeautifulSoup(response.text, "html.parser")
-  
+
   form = soup.find("form")
   action = form.get("action")
   post_url = urljoin(url, action)
   print("This is the post URL: ", post_url)
-  
+
   payload = {}
 
-  
+
   for input_tag in form.find_all("input"):
       name = input_tag.get("name")
       value = input_tag.get("value", "")
-  
+
       if name:
           payload[name] = value
       if not value and input_tag.get("type") == "number" and input_tag.has_attr("required"):
@@ -145,12 +225,13 @@ def check_ping(hostname) -> bool:
     print("hostname:",hostname)
     try:
         subprocess.check_output(
-            "ping -c 1 " + hostname, shell=True
+            "ping -c 1 -w 2 " + hostname, shell=True
         )
     except Exception:
+        print(RED + "ping check failed" + RESET)
         return False
 
-    print('Ping: Success')
+    print(GREEN + 'Ping: Success' + RESET)
     return True
 
 def parse_arguments():
@@ -162,6 +243,7 @@ def parse_arguments():
 
   parser.add_argument('url', help='the URL of your choice: %(prog)s  http://htburl.htb', type=str)
   parser.add_argument('--noping', help='skip the default ping check', action='store_true')
+  parser.add_argument('--nosub', help='skip dubdomain enumeration', action='store_true')
   args = parser.parse_args()
   return args
 
@@ -171,18 +253,21 @@ def main():
   url = args.url
   parsed_url = urlparse(url)
   hostname = parsed_url.hostname
+  timeout = 5
 
   if args.noping:
       print("Skipping the ping check")
   else:
       if not check_ping(hostname):
-          print("ping check failed")
           sys.exit()
 
   print('Target:', url)
   time.sleep(2)
-    
+
 # select function to run
+#  print(enumerate_subdomain(url, hostname, timeout))
+  enumerate_subdomain(url, hostname, timeout)
+  sys.exit()
   cypher(url)
   sys.exit()
   weightedgrade()
