@@ -6,6 +6,7 @@ import random
 import time
 import subprocess
 import string
+import socket
 
 import requests
 from bs4 import BeautifulSoup
@@ -13,6 +14,7 @@ import urllib.parse
 from urllib.parse import urljoin
 from urllib.parse import urlencode
 from urllib.parse import urlparse
+from urllib3.util.retry import Retry
 from ratelimit import limits, sleep_and_retry
 
 RESET = '\033[0m' # return to standard terminal text color
@@ -72,18 +74,20 @@ def send_request(target, header, result):
     print("testing this: ", target)
     print("and this header: ", header)
     try:
-        random_response = requests.get(
+        response = requests.get(
             target,
             timeout=TIMEOUT,
             headers={"Host": header},
             verify=False,#todo add https
             allow_redirects=True)
-        if random_response.status_code < 500:
+        response.raise_for_status()
+        if response.status_code < 500:
             result["wildcard_detected"] = True
-            result["target"] = True
             result["target"] = target
-            print(RED + result + RESET)
+            print(f"{RED}{result}{RESET}")
             return result
+        else:
+            print(f"{RED}{response.status_code}{RESET}")
     except requests.exceptions.HTTPError as e:
         print(RED)
         print(e)
@@ -92,26 +96,21 @@ def send_request(target, header, result):
         print(RED)
         print(e)
         print(RESET)
-        print(YELLOW + "NO wildcard detected on", target + RESET)
+        print(f"{YELLOW}NO wildcard detected on {target}{RESET}")
     return result
 
 def random_subdomain(length: int = 16) -> str:
     return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
-def enumerate_subdomain(url: str, domain: str, timeout: int = 5):
-    """
-    :return: dict with existence and wildcard info
-   """
-
-#    target = f"https://{subdomain}.{domain}"
+def enumerate_subdomain(url: str, domain: str, ip: str, timeout: int = 5):
     target = url
     random_header = f"{random_subdomain()}.{domain}"
     if "https" in url:
         random_target = f"https://{random_header}"
+        random_target = f"https://{ip}"
     else:
         random_target = f"http://{random_header}"
-#    random_target = f"https://{random_subdomain()}.{domain}"
-#    random_target = f"https://test2.{domain}"
+        random_target = f"http://{ip}"
 
     result = {
         "target": target,
@@ -121,7 +120,6 @@ def enumerate_subdomain(url: str, domain: str, timeout: int = 5):
     }
 
     # Wildcard detection
-    print("wildcard test: ", random_target)
     result = send_request(random_target, random_header, result)
 
     # loop through wordlist of subdomains
@@ -250,7 +248,8 @@ def parse_arguments():
     parser.add_argument('url', help='the URL of your choice: %(prog)s  http://htburl.htb', type=str)
     parser.add_argument('--noping', help='skip the default ping check', action='store_true')
     parser.add_argument('--nosub', help='skip subdomain enumeration', action='store_true')
-    parser.add_argument('-r', '--rate', help='rate limit FAST, MEDIUM, SLOW', default='FAST', type=str)
+    parser.add_argument('-r', '--rate', help='rate limit FAST, MEDIUM, SLOW', default='FAST', choices=['FAST', 'MEDIUM', 'SLOW'], type=str)
+    parser.add_argument('-i', '--ip', help='rate limit FAST, MEDIUM, SLOW', type=str)
     args = parser.parse_args()
     return args
 
@@ -260,6 +259,9 @@ def main():
     url = args.url
     parsed_url = urlparse(url)
     hostname = parsed_url.hostname
+    ip = socket.gethostbyname(hostname)
+
+    session = requests.Session()
 
     if args.noping:
         print("Skipping the ping check")
@@ -267,11 +269,17 @@ def main():
         if not check_ping(hostname):
             sys.exit()
 
+    if args.ip:
+        print("using this ip", args.ip)
+    else:
+        print("noo")
+
+
     print('Target:', url)
     time.sleep(2)
 
 # select function to run
-    enumerate_subdomain(url, hostname, TIMEOUT)
+    enumerate_subdomain(url, hostname, ip, TIMEOUT)
     sys.exit()
     cypher(url)
     sys.exit()
