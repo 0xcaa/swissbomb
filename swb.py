@@ -15,7 +15,6 @@ from urllib.parse import urljoin
 from urllib.parse import urlencode
 from urllib.parse import urlparse
 from urllib3.util.retry import Retry
-from ratelimit import limits, sleep_and_retry
 
 RESET = '\033[0m' # return to standard terminal text color
 BLACK = '\033[30m'
@@ -51,15 +50,6 @@ BACKGROUND_BRIGHT_MAGENTA = '\033[105m'
 BACKGROUND_BRIGHT_CYAN = '\033[106m'
 BACKGROUND_WHITE = '\033[107m'
 
-# rate limit
-FAST = 5
-ONE_MINUTE = 60
-FIVE_MINUTES = 300
-FIFTEEN_MINUTES = 900
-ONE_HOUR = 3600
-
-TIMEOUT = 5
-
 
 
 ##Todo
@@ -68,66 +58,95 @@ TIMEOUT = 5
 # pass wordlist as filename to exploit function
 
 
-@sleep_and_retry
-@limits(calls=1, period=FAST)
-def send_request(target, header, result):
-    print("testing this: ", target)
-    print("and this header: ", header)
+def send_request(target, header, result, timeout):
     try:
         response = requests.get(
             target,
-            timeout=TIMEOUT,
             headers={"Host": header},
-            verify=False,#todo add https
-            allow_redirects=True)
-        response.raise_for_status()
-        if response.status_code < 500:
-            result["wildcard_detected"] = True
-            result["target"] = target
-            print(f"{RED}{result}{RESET}")
+            verify=False,
+            allow_redirects=False)
+        status = response.status_code
+        location = response.headers.get("Location", "")
+        #wildcard check
+        if result["wildcard_detected"]:
+            if 200 <= status < 300:
+                print(f"{RED}{status}{RESET} {result["target"]} {location} * wildcard detected{RESET}")
+                return result
+            else:
+                result["wildcard_detected"] = False
+        #detect redirect
+        if status in (301, 302, 307, 308):
+            print(f"{BLUE}{status}{RESET} {result["target"]} -> {location}{RESET}")
+            return result
+        elif 200 <= status < 300:
+            print(f"{GREEN}{status}{RESET} {result["target"]} exists!{RESET}")
+            return result
+        elif 300 <= status < 400:
+            print(f"{BLUE}{status}{RESET} {result["target"]} {location}{RESET}")
+            return result
+        elif 400 <= status < 500:
+            print(f"{RED}{status}{RESET} {result["target"]} {location}{RESET}")
             return result
         else:
-            print(f"{RED}{response.status_code}{RESET}")
+            print(f"{RED}{status}{RESET} {result["target"]}{RESET}")
+            return result
     except requests.exceptions.HTTPError as e:
         print(RED)
+        print(f"{result["target"]}")
         print(e)
         print(RESET)
     except requests.RequestException as e:
         print(RED)
+        print(f"{result["target"]}")
         print(e)
         print(RESET)
-        print(f"{YELLOW}NO wildcard detected on {target}{RESET}")
+
     return result
 
-def random_subdomain(length: int = 16) -> str:
-    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
-def enumerate_subdomain(url: str, domain: str, ip: str, timeout: int = 5):
+def enumerate_subdomain(url: str, domain: str, ip: str, HTTPS: bool, speed: int, timeout: int = 5):
     target = url
-    random_header = f"{random_subdomain()}.{domain}"
-    if "https" in url:
-        random_target = f"https://{random_header}"
+    random_header = f"{''.join(random.choices(string.ascii_lowercase + string.digits, k=16))}.{domain}"
+
+    if HTTPS:
+        target = f"https://{ip}"
         random_target = f"https://{ip}"
     else:
-        random_target = f"http://{random_header}"
+        target = f"http://{ip}"
         random_target = f"http://{ip}"
 
     result = {
-        "target": target,
+        "target": url,
         "exists": False,
-        "wildcard_detected": False,
+        "wildcard_detected": True,
         "status_code": None
     }
 
     # Wildcard detection
-    result = send_request(random_target, random_header, result)
+    if HTTPS:
+        result["target"] = f"https://{random_header}"
+        result = send_request(random_target, random_header, result, timeout)
+        if result["wildcard_detected"]:
+            return result
+    else:
+        result["target"] = f"http://{random_header}"
+        result = send_request(random_target, random_header, result, timeout)
+        if result["wildcard_detected"]:
+            return result
 
     # loop through wordlist of subdomains
     with open("wordlist.txt") as f:
         for word in f:
-            target = f"http://{word.strip()}.{domain}"
-            header = f"{word.strip()}.{domain}"
-            result = send_request(target, header, result)
+            word = word.strip()
+            header = f"{word}.{domain}"
+            if HTTPS:
+                result["target"] = f"https://{word}.{domain}"
+                result = send_request(target, header, result, timeout)
+            else:
+                result["target"] = f"http://{word}.{domain}"
+                result = send_request(target, header, result, timeout)
+
+            time.sleep(speed)
 
     return result
 
@@ -226,7 +245,7 @@ def weightedgrade(url):
 
 
 def check_ping(hostname) -> bool:
-    print("hostname:",hostname)
+    print("Hostname:",hostname)
     try:
         subprocess.check_output(
             "ping -c 1 -w 2 " + hostname, shell=True
@@ -235,8 +254,15 @@ def check_ping(hostname) -> bool:
         print(RED + "ping check failed" + RESET)
         return False
 
-    print(GREEN + 'Ping: Success' + RESET)
+    print('Ping: Success')
     return True
+
+def get_rate(rate_name):
+    return {
+        "fast": 0.1,
+        "medium": 0.5,
+        "slow": 1.0,
+    }[rate_name]
 
 def parse_arguments():
 
@@ -245,11 +271,22 @@ def parse_arguments():
             description='Swissbomb demo',
             epilog='this is the epilog')
 
-    parser.add_argument('url', help='the URL of your choice: %(prog)s  http://htburl.htb', type=str)
-    parser.add_argument('--noping', help='skip the default ping check', action='store_true')
-    parser.add_argument('--nosub', help='skip subdomain enumeration', action='store_true')
-    parser.add_argument('-r', '--rate', help='rate limit FAST, MEDIUM, SLOW', default='FAST', choices=['FAST', 'MEDIUM', 'SLOW'], type=str)
-    parser.add_argument('-i', '--ip', help='rate limit FAST, MEDIUM, SLOW', type=str)
+    parser.add_argument('url',
+                        help='the URL of your choice: %(prog)s  http://htburl.htb',
+                        type=str)
+    parser.add_argument('--noping',
+                        help='skip the default ping check',
+                        action='store_true')
+    parser.add_argument('--nosub',
+                        help='skip subdomain enumeration',
+                        action='store_true')
+    parser.add_argument('-r', '--rate',
+                        help='rate limit fast, medium, slow',
+                        default='fast', choices=['fast', 'medium', 'slow'],
+                        type=str)
+    parser.add_argument('-i', '--ip',
+                        help='rate limit FAST, MEDIUM, SLOW',
+                        type=str)
     args = parser.parse_args()
     return args
 
@@ -260,8 +297,9 @@ def main():
     parsed_url = urlparse(url)
     hostname = parsed_url.hostname
     ip = socket.gethostbyname(hostname)
-
-    session = requests.Session()
+    HTTPS = False
+    speed = get_rate(args.rate)
+    timeout = 5
 
     if args.noping:
         print("Skipping the ping check")
@@ -270,16 +308,23 @@ def main():
             sys.exit()
 
     if args.ip:
-        print("using this ip", args.ip)
+        print("IP:", args.ip)
+        ip = args.ip
     else:
-        print("noo")
+        print(YELLOW + "No IP specified detected this", ip + RESET)
 
+    if "https" in url:
+        HTTPS = True
+        print(GREEN + "HTTPS:", str(HTTPS) + RESET)
+    else:
+        HTTPS = False
+        print(YELLOW + "HTTPS:", str(HTTPS) + RESET)
 
     print('Target:', url)
     time.sleep(2)
 
 # select function to run
-    enumerate_subdomain(url, hostname, ip, TIMEOUT)
+    enumerate_subdomain(url, hostname, ip, HTTPS, speed, timeout)
     sys.exit()
     cypher(url)
     sys.exit()
