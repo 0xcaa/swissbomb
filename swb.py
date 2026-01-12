@@ -7,6 +7,10 @@ import time
 import subprocess
 import string
 import socket
+import json
+import os
+import tempfile
+from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
@@ -68,44 +72,47 @@ def send_request(target, header, result, timeout):
         status = response.status_code
         location = response.headers.get("Location", "")
         #wildcard check
-        if result["wildcard_detected"]:
+        if result["Subdomain_wildcard_detected"]:
             if 200 <= status < 300:
                 print(f"{RED}{status}{RESET} {result["target"]} {location} * wildcard detected{RESET}")
                 return result
             else:
-                result["wildcard_detected"] = False
+                result["Subdomain_wildcard_detected"] = False
         #detect redirect
         if status in (301, 302, 307, 308):
-            print(f"{BLUE}{status}{RESET} {result["target"]} -> {location}{RESET}")
+            print(f"{BLUE}{status}{RESET} {result["Target"]} -> {location}{RESET}")
             return result
         elif 200 <= status < 300:
-            print(f"{GREEN}{status}{RESET} {result["target"]} exists!{RESET}")
+            print(f"{GREEN}{status}{RESET} {result["Target"]} exists!{RESET}")
+            result[header] = True
             return result
         elif 300 <= status < 400:
-            print(f"{BLUE}{status}{RESET} {result["target"]} {location}{RESET}")
+            print(f"{BLUE}{status}{RESET} {result["Target"]} {location}{RESET}")
             return result
         elif 400 <= status < 500:
-            print(f"{RED}{status}{RESET} {result["target"]} {location}{RESET}")
+            print(f"{RED}{status}{RESET} {result["Target"]} {location}{RESET}")
             return result
         else:
-            print(f"{RED}{status}{RESET} {result["target"]}{RESET}")
+            print(f"{RED}{status}{RESET} {result["Target"]}{RESET}")
             return result
     except requests.exceptions.HTTPError as e:
         print(RED)
-        print(f"{result["target"]}")
+        print(f"{result["Target"]}")
         print(e)
         print(RESET)
     except requests.RequestException as e:
         print(RED)
-        print(f"{result["target"]}")
+        print(f"{result["Target"]}")
         print(e)
         print(RESET)
 
     return result
 
 
-def enumerate_subdomain(url: str, domain: str, ip: str, HTTPS: bool, speed: int, timeout: int = 5):
+def enumerate_subdomain(result: dict, url: str, domain: str, ip: str, HTTPS: bool, speed: int, timeout: int = 5):
+    result["Enumerate_subdomain"] = True
     target = url
+
     random_header = f"{''.join(random.choices(string.ascii_lowercase + string.digits, k=16))}.{domain}"
 
     if HTTPS:
@@ -115,23 +122,21 @@ def enumerate_subdomain(url: str, domain: str, ip: str, HTTPS: bool, speed: int,
         target = f"http://{ip}"
         random_target = f"http://{ip}"
 
-    result = {
-        "target": url,
-        "exists": False,
-        "wildcard_detected": True,
-        "status_code": None
-    }
+    result["Subdomain_wildcard_detected"] = True
 
     # Wildcard detection
     if HTTPS:
-        result["target"] = f"https://{random_header}"
+        result["Target"] = f"https://{random_header}"
         result = send_request(random_target, random_header, result, timeout)
-        if result["wildcard_detected"]:
+        result["Target"] = f"{result["url"]}"
+        if result["Subdomain_wildcard_detected"]:
             return result
     else:
-        result["target"] = f"http://{random_header}"
+        result["Target"] = f"http://{random_header}"
         result = send_request(random_target, random_header, result, timeout)
-        if result["wildcard_detected"]:
+        result["Target"] = f"{result["url"]}"
+        if result["Subdomain_wildcard_detected"]:
+            result["Target"] = f"https://{rando}"
             return result
 
     # loop through wordlist of subdomains
@@ -140,13 +145,14 @@ def enumerate_subdomain(url: str, domain: str, ip: str, HTTPS: bool, speed: int,
             word = word.strip()
             header = f"{word}.{domain}"
             if HTTPS:
-                result["target"] = f"https://{word}.{domain}"
+                result["Target"] = f"https://{word}.{domain}"
                 result = send_request(target, header, result, timeout)
             else:
-                result["target"] = f"http://{word}.{domain}"
+                result["Target"] = f"http://{word}.{domain}"
                 result = send_request(target, header, result, timeout)
 
             time.sleep(speed)
+        result["Target"] = f"{result["url"]}"
 
     return result
 
@@ -252,10 +258,11 @@ def check_ping(hostname) -> bool:
         )
     except Exception:
         print(RED + "ping check failed" + RESET)
-        return False
+        sys.exit()
 
     print('Ping: Success')
     return True
+
 
 def get_rate(rate_name):
     return {
@@ -263,6 +270,60 @@ def get_rate(rate_name):
         "medium": 0.5,
         "slow": 1.0,
     }[rate_name]
+
+
+def append_log(output_file, key, value):
+    with open(output_file, "a") as f:
+        f.write(json.dumps({key: value}) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
+
+def add_result_missing_check(result: dict, file, key, value):
+    if key in result:
+        return result[key]
+    result[key] = value
+    append_log(file, key, value)
+    return value
+
+
+def write_current_state(output_file, result: dict):
+    """
+    Rewrite output_file so it exactly matches the current contents of result.
+    Safe on Linux (atomic replace).
+    """
+
+    directory = os.path.dirname(os.path.abspath(output_file)) or "."
+
+    # write to a temp file first
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        dir=directory,
+        delete=False
+    ) as tmp:
+        for key, value in result.items():
+            tmp.write(json.dumps({key: value}) + "\n")
+        tmp.flush()
+        os.fsync(tmp.fileno())
+
+    # atomic replace
+    os.replace(tmp.name, output_file)
+
+
+def load_log(output_file, result: dict):
+    if not output_file.exists():
+        return
+
+    with open(output_file) as f:
+        for line_no, line in enumerate(f, 1):
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                print(f"Skipping corrupt line {line_no}")
+                continue
+
+            # each entry is {key: value}
+            for key, value in entry.items():
+                result[key] = value
 
 def parse_arguments():
 
@@ -279,6 +340,9 @@ def parse_arguments():
                         action='store_true')
     parser.add_argument('--nosub',
                         help='skip subdomain enumeration',
+                        action='store_true')
+    parser.add_argument('--newscan',
+                        help='Force fresh scan',
                         action='store_true')
     parser.add_argument('-r', '--rate',
                         help='rate limit fast, medium, slow',
@@ -300,12 +364,18 @@ def main():
     HTTPS = False
     speed = get_rate(args.rate)
     timeout = 5
+    output_file = Path(f"{hostname}.log")
 
-    if args.noping:
-        print("Skipping the ping check")
+    result = {"Target": url,
+              "IP": ip,
+              "url": url,
+              "hostname": hostname
+            }
+
+    if not args.noping:
+        check_ping(hostname)
     else:
-        if not check_ping(hostname):
-            sys.exit()
+        print("Skipping the ping check")
 
     if args.ip:
         print("IP:", args.ip)
@@ -316,16 +386,27 @@ def main():
     if "https" in url:
         HTTPS = True
         print(GREEN + "HTTPS:", str(HTTPS) + RESET)
+        add_result_missing_check(result, output_file, "HTTPS", HTTPS)
     else:
         HTTPS = False
         print(YELLOW + "HTTPS:", str(HTTPS) + RESET)
+        add_result_missing_check(result, output_file, "HTTPS", HTTPS)
+
 
     print('Target:', url)
     time.sleep(2)
 
+
+#   resume from last scan
+    if not args.newscan:
+        load_log(output_file, result)
+
 # select function to run
-    enumerate_subdomain(url, hostname, ip, HTTPS, speed, timeout)
+    if not result.get("Enumerate_subdomain", False):
+        enumerate_subdomain(result, url, hostname, ip, HTTPS, speed, timeout)
+        write_current_state(output_file, result)
     sys.exit()
+
     cypher(url)
     sys.exit()
     weightedgrade()
