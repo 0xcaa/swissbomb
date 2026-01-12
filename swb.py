@@ -1,23 +1,12 @@
 #!/usr/bin/env python3
 
-import sys
-import argparse
-import random
-import time
-import subprocess
-import string
-import socket
-import json
-import os
-import tempfile
+import sys, argparse, random, time, subprocess, string, socket, json, os, tempfile
 from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
 import urllib.parse
-from urllib.parse import urljoin
-from urllib.parse import urlencode
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlencode, urlparse
 from urllib3.util.retry import Retry
 
 RESET = '\033[0m' # return to standard terminal text color
@@ -61,6 +50,10 @@ BACKGROUND_WHITE = '\033[107m'
 # git repository finder function
 # pass wordlist as filename to exploit function
 
+def check_robots(result: dict):
+    result["Check_robots"] = False
+    print("checking robots")
+
 
 def send_request(target, header, result, timeout):
     try:
@@ -75,26 +68,26 @@ def send_request(target, header, result, timeout):
         if result["Subdomain_wildcard_detected"]:
             if 200 <= status < 300:
                 print(f"{RED}{status}{RESET} {result["target"]} {location} * wildcard detected{RESET}")
-                return result
+                return True
             else:
                 result["Subdomain_wildcard_detected"] = False
+                return False
         #detect redirect
         if status in (301, 302, 307, 308):
             print(f"{BLUE}{status}{RESET} {result["Target"]} -> {location}{RESET}")
-            return result
+            return False
         elif 200 <= status < 300:
             print(f"{GREEN}{status}{RESET} {result["Target"]} exists!{RESET}")
-            result[header] = True
-            return result
+            return True
         elif 300 <= status < 400:
             print(f"{BLUE}{status}{RESET} {result["Target"]} {location}{RESET}")
-            return result
+            return False
         elif 400 <= status < 500:
             print(f"{RED}{status}{RESET} {result["Target"]} {location}{RESET}")
-            return result
+            return False
         else:
             print(f"{RED}{status}{RESET} {result["Target"]}{RESET}")
-            return result
+            return False
     except requests.exceptions.HTTPError as e:
         print(RED)
         print(f"{result["Target"]}")
@@ -110,7 +103,7 @@ def send_request(target, header, result, timeout):
 
 
 def enumerate_subdomain(result: dict, url: str, domain: str, ip: str, HTTPS: bool, speed: int, timeout: int = 5):
-    result["Enumerate_subdomain"] = True
+    result["Enumerate_subdomain"] = False
     target = url
 
     random_header = f"{''.join(random.choices(string.ascii_lowercase + string.digits, k=16))}.{domain}"
@@ -127,16 +120,20 @@ def enumerate_subdomain(result: dict, url: str, domain: str, ip: str, HTTPS: boo
     # Wildcard detection
     if HTTPS:
         result["Target"] = f"https://{random_header}"
-        result = send_request(random_target, random_header, result, timeout)
+        if send_request(random_target, random_header, result, timeout):
+            print("This domain uses wirldcard")
+            return
         result["Target"] = f"{result["url"]}"
         if result["Subdomain_wildcard_detected"]:
             return result
     else:
         result["Target"] = f"http://{random_header}"
-        result = send_request(random_target, random_header, result, timeout)
+        if send_request(random_target, random_header, result, timeout):
+            print("This domain uses wirldcard")
+            return
         result["Target"] = f"{result["url"]}"
         if result["Subdomain_wildcard_detected"]:
-            result["Target"] = f"https://{rando}"
+            result["Target"] = f"https://{random_header}"
             return result
 
     # loop through wordlist of subdomains
@@ -146,10 +143,17 @@ def enumerate_subdomain(result: dict, url: str, domain: str, ip: str, HTTPS: boo
             header = f"{word}.{domain}"
             if HTTPS:
                 result["Target"] = f"https://{word}.{domain}"
-                result = send_request(target, header, result, timeout)
+                if send_request(target, header, result, timeout):
+                    if result.get("Subdmains", False):
+                        result["Subdomains"] = ""
+                    result["Subdomains"] = f"{result["Subdomains"]},{result["Target"]}"
             else:
                 result["Target"] = f"http://{word}.{domain}"
-                result = send_request(target, header, result, timeout)
+                if send_request(target, header, result, timeout):
+                    if not result.get("Subdomains", False):
+                        result["Subdomains"] = ""
+                    result["Subdomains"] = f"{result["Subdomains"]} {result["Target"]}"
+
 
             time.sleep(speed)
         result["Target"] = f"{result["url"]}"
@@ -340,7 +344,10 @@ def parse_arguments():
                         action='store_true')
     parser.add_argument('--nosub',
                         help='skip subdomain enumeration',
-                        action='store_true')
+                        action='store_false')
+    parser.add_argument('--norobots',
+                        help='skip robots.txt check',
+                        action='store_false')
     parser.add_argument('--newscan',
                         help='Force fresh scan',
                         action='store_true')
@@ -371,6 +378,8 @@ def main():
               "url": url,
               "hostname": hostname
             }
+    result["Enumerate_subdomain"] = args.nosub
+    result["Check_robots"] = args.norobots
 
     if not args.noping:
         check_ping(hostname)
@@ -402,8 +411,12 @@ def main():
         load_log(output_file, result)
 
 # select function to run
-    if not result.get("Enumerate_subdomain", False):
+    if result["Enumerate_subdomain"]:
         enumerate_subdomain(result, url, hostname, ip, HTTPS, speed, timeout)
+        write_current_state(output_file, result)
+
+    if result["Check_robots"]:
+        check_robots(result)
         write_current_state(output_file, result)
     sys.exit()
 
