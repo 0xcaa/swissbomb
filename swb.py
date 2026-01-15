@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 
+from specific import weightedgrade
+from specific import cypher
+from specific import format_response
+import helpers
+
 import sys, argparse, random, time, subprocess, string, socket, json, os, tempfile
 from pathlib import Path
+
 
 import requests
 from bs4 import BeautifulSoup
@@ -9,51 +15,66 @@ import urllib.parse
 from urllib.parse import urljoin, urlencode, urlparse
 from urllib3.util.retry import Retry
 
-RESET = '\033[0m' # return to standard terminal text color
-BLACK = '\033[30m'
-RED = '\033[31m'
-GREEN = '\033[32m'
-YELLOW = '\033[33m'
-BLUE = '\033[34m'
-MAGENTA = '\033[35m'
-CYAN = '\033[36m'
-LIGHT_GRAY = '\033[37m'
-DARK_GRAY = '\033[90m'
-BRIGHT_RED = '\033[91m'
-BRIGHT_GREEN = '\033[92m'
-BRIGHT_YELLOW = '\033[93m'
-BRIGHT_BLUE = '\033[94m'
-BRIGHT_MAGENTA = '\033[95m'
-BRIGHT_CYAN = '\033[96m'
-WHITE = '\033[97m'
-BACKGROUND_BLACK = '\033[40m'
-BACKGROUND_RED = '\033[41m'
-BACKGROUND_GREEN = '\033[42m'
-BACKGROUND_YELLOW = '\033[43m'
-BACKGROUND_BLUE = '\033[44m'
-BACKGROUND_MAGENTA = '\033[45m'
-BACKGROUND_CYAN = '\033[46m'
-BACKGROUND_LIGHT_GRAY = '\third-party033[47m'
-BACKGROUND_DARK_GRAY = '\033[100m'
-BACKGROUND_BRIGHT_RED = '\033[101m'
-BACKGROUND_BRIGHT_GREEN = '\033[102m'
-BACKGROUND_BRIGHT_YELLOW = '\033[103m'
-BACKGROUND_BRIGHT_BLUE = '\033[104m'
-BACKGROUND_BRIGHT_MAGENTA = '\033[105m'
-BACKGROUND_BRIGHT_CYAN = '\033[106m'
-BACKGROUND_WHITE = '\033[107m'
-
-
-
 ##Todo
 # robots.txt vuln checker function
 # git repository finder function
 # pass wordlist as filename to exploit function
 
 def check_robots(result: dict):
-    result["Check_robots"] = False
-    print("checking robots")
+    """
+    Check for robots.txt files on the main URL and all subdomains found
+    """
+    # Get the base URL and subdomains
+    base_url = result.get("url", "")
+    domain = result.get("hostname", "")
+    subdomains = result.get("Subdomains", [])
 
+    # Create a list of URLs to check for robots.txt
+    urls_to_check = [base_url]
+
+    # Add all subdomains to the list
+    for subdomain in subdomains:
+        urls_to_check.append(subdomain)
+
+    # Store results in the results dictionary
+    if "Robots_txt_results" not in result:
+        result["Robots_txt_results"] = {}
+
+    # Check each URL for robots.txt
+    for url in urls_to_check:
+        try:
+            # Construct the robots.txt URL
+            if url.endswith('/'):
+                robots_url = url + "robots.txt"
+            else:
+                robots_url = url + "/robots.txt"
+
+            # Send request to robots.txt
+            response = requests.get(
+                robots_url,
+                verify=False,
+                allow_redirects=True,
+                timeout=5
+            )
+
+            # Store the result
+            result["Robots_txt_results"][robots_url] = {
+                "status_code": response.status_code,
+                "content_length": len(response.content),
+                "headers": dict(response.headers)
+            }
+
+            # Print status
+            if response.status_code == 200:
+                print(f"{GREEN}200{RESET} robots.txt found at {robots_url}")
+            else:
+                print(f"{RED}{response.status_code}{RESET} robots.txt not found at {robots_url}")
+
+        except Exception as e:
+            print(f"{RED}Error checking {robots_url}: {e}{RESET}")
+            result["Robots_txt_results"][robots_url] = {
+                "error": str(e)
+            }
 
 def send_request(target, header, result, timeout):
     try:
@@ -65,44 +86,58 @@ def send_request(target, header, result, timeout):
         status = response.status_code
         location = response.headers.get("Location", "")
         #wildcard check
-        if result["Subdomain_wildcard_detected"]:
+        if result.get("Subdomain_wildcard_detected", False):
             if 200 <= status < 300:
-                print(f"{RED}{status}{RESET} {result["target"]} {location} * wildcard detected{RESET}")
+                print(f"{RED}{status}{RESET} {target} {location} * wildcard detected{RESET}")
                 return True
             else:
                 result["Subdomain_wildcard_detected"] = False
                 return False
         #detect redirect
         if status in (301, 302, 307, 308):
-            print(f"{BLUE}{status}{RESET} {result["Target"]} -> {location}{RESET}")
+            print(f"{BLUE}{status}{RESET} {target} -> {location}{RESET}")
             return False
         elif 200 <= status < 300:
-            print(f"{GREEN}{status}{RESET} {result["Target"]} exists!{RESET}")
+            print(f"{GREEN}{status}{RESET} {target} exists!{RESET}")
+            # Store the hostname in result dictionary for 200 responses
+            if "Successful_Hostnames" not in result:
+                result["Successful_Hostnames"] = []
+            result["Successful_Hostnames"].append(target)
             return True
         elif 300 <= status < 400:
-            print(f"{BLUE}{status}{RESET} {result["Target"]} {location}{RESET}")
+            print(f"{BLUE}{status}{RESET} {target} {location}{RESET}")
             return False
         elif 400 <= status < 500:
-            print(f"{RED}{status}{RESET} {result["Target"]} {location}{RESET}")
+            print(f"{RED}{status}{RESET} {target} {location}{RESET}")
             return False
         else:
-            print(f"{RED}{status}{RESET} {result["Target"]}{RESET}")
+            print(f"{RED}{status}{RESET} {target}{RESET}")
             return False
     except requests.exceptions.HTTPError as e:
         print(RED)
-        print(f"{result["Target"]}")
+        print(f"{target}")
         print(e)
         print(RESET)
     except requests.RequestException as e:
         print(RED)
-        print(f"{result["Target"]}")
+        print(f"{target}")
         print(e)
         print(RESET)
 
-    return result
+    return False
 
 
-def enumerate_subdomain(result: dict, url: str, domain: str, ip: str, HTTPS: bool, speed: int, timeout: int = 5):
+def enumerate_subdomains(result: dict, timeout: int = 5):
+    """
+    Modified to only take result dictionary and store all info there
+    """
+    # Get values from result dictionary
+    url = result.get("url", "")
+    domain = result.get("hostname", "")
+    ip = result.get("IP", "")
+    HTTPS = result.get("HTTPS", False)
+    speed = result.get("speed", 0.1)
+
     result["Enumerate_subdomain"] = False
     target = url
 
@@ -119,22 +154,24 @@ def enumerate_subdomain(result: dict, url: str, domain: str, ip: str, HTTPS: boo
 
     # Wildcard detection
     if HTTPS:
-        result["Target"] = f"https://{random_header}"
+        test_target = f"https://{random_header}"
+        result["Target"] = test_target
         if send_request(random_target, random_header, result, timeout):
-            print("This domain uses wirldcard")
+            print("This domain uses wildcard")
             return
-        result["Target"] = f"{result["url"]}"
-        if result["Subdomain_wildcard_detected"]:
-            return result
+        result["Target"] = f"{url}"
+        if result.get("Subdomain_wildcard_detected", False):
+            return
     else:
-        result["Target"] = f"http://{random_header}"
+        test_target = f"http://{random_header}"
+        result["Target"] = test_target
         if send_request(random_target, random_header, result, timeout):
-            print("This domain uses wirldcard")
+            print("This domain uses wildcard")
             return
-        result["Target"] = f"{result["url"]}"
-        if result["Subdomain_wildcard_detected"]:
+        result["Target"] = f"{url}"
+        if result.get("Subdomain_wildcard_detected", False):
             result["Target"] = f"https://{random_header}"
-            return result
+            return
 
     # loop through wordlist of subdomains
     with open("wordlist.txt") as f:
@@ -142,116 +179,26 @@ def enumerate_subdomain(result: dict, url: str, domain: str, ip: str, HTTPS: boo
             word = word.strip()
             header = f"{word}.{domain}"
             if HTTPS:
-                result["Target"] = f"https://{word}.{domain}"
+                test_target = f"https://{word}.{domain}"
+                result["Target"] = test_target
                 if send_request(target, header, result, timeout):
-                    if result.get("Subdmains", False):
-                        result["Subdomains"] = ""
-                    result["Subdomains"] = f"{result["Subdomains"]},{result["Target"]}"
+                    # Store successful subdomain in result dictionary
+                    if "Subdomains" not in result:
+                        result["Subdomains"] = []
+                    result["Subdomains"].append(test_target)
             else:
-                result["Target"] = f"http://{word}.{domain}"
+                test_target = f"http://{word}.{domain}"
+                result["Target"] = test_target
                 if send_request(target, header, result, timeout):
-                    if not result.get("Subdomains", False):
-                        result["Subdomains"] = ""
-                    result["Subdomains"] = f"{result["Subdomains"]} {result["Target"]}"
-
+                    # Store successful subdomain in result dictionary
+                    if "Subdomains" not in result:
+                        result["Subdomains"] = []
+                    result["Subdomains"].append(test_target)
 
             time.sleep(speed)
-        result["Target"] = f"{result["url"]}"
+        result["Target"] = f"{url}"
 
     return result
-
-def format_response(response, payload):
-    if response.status_code > 300 and response.status_code < 500:
-        print(RED + str(response.status_code) + RESET)
-    elif response.status_code > 400 and response.status_code < 600:
-        print(YELLOW + str(response.status_code) + RESET)
-    elif response.status_code > 100 and response.status_code < 300:
-        print(GREEN + str(response.status_code) + RESET)
-        return
-    print(response.text, "with:", payload)
-
-
-def cypher(url):
-
-#  url = "http://cypher.htb/login"
-
-    session = requests.Session()
-    response = session.get(url)
-
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    form = soup.find("form")
-    action = form.get("action")
-    post_url = urljoin(url, action)
-    print("This is the post URL: ", post_url)
-
-    c = [("admin", "admin")]
-
-    with open("wordlist.txt") as f:
-        for word in f:
-            for u, p in c:
-                formatted = f'{{"username":"{word.strip()}","password":"{p}"}}'
-                post_response = session.post(post_url, data=formatted, timeout=60)
-                format_response(post_response, urllib.parse.quote_plus(formatted))
-                time.sleep(1)
-                formatted = f'{{"username":"{u}","password":"{word.strip()}"}}'
-                post_response = session.post(post_url, data=formatted, timeout=60)
-                format_response(post_response, urllib.parse.quote_plus(formatted))
-                time.sleep(1)
-
-
-def weightedgrade(url):
-
-    session = requests.Session()
-
-  #  url = "http://10.10.11.253/weighted-grade"
-    response = session.get(url)
-
-    soup = BeautifulSoup(response.text, "html.parser")
-
-    form = soup.find("form")
-    action = form.get("action")
-    post_url = urljoin(url, action)
-    print("This is the post URL: ", post_url)
-
-    payload = {}
-
-
-    for input_tag in form.find_all("input"):
-        name = input_tag.get("name")
-        value = input_tag.get("value", "")
-
-        if name:
-            payload[name] = value
-        if not value and input_tag.get("type") == "number" and input_tag.has_attr("required"):
-            payload[name] = 20
-
-        if not value and input_tag.get("type") == "text" and input_tag.has_attr("required"):
-            payload[name] = "test"
-
-    with open("wordlist.txt") as f:
-      for x in f:
-        for k, v in payload.items():
-          if payload[k] == "test":
-              temp = payload[k]
-              payload[k] = "FUZZVALUE"
-              encoded_payload = urlencode(list(payload.items()))
-              encoded_payload = encoded_payload.replace('FUZZVALUE', x.strip())
-
-              start = time.monotonic()
-              post_response = session.post(post_url, data=encoded_payload, timeout=60)
-              elapsed = time.monotonic() - start
-
-              if elapsed > 5:
-                  print(f"⚠️ Slow response successuful Ruby SSTI: {elapsed:.2f}s")
-                  print("Full Payload:", encoded_payload)
-                  print("payload: ", x)
-                  sys.exit()
-              payload[k] = temp
-              print(post_response.status_code)
-#            print(post_response.text)
-          else:
-              continue
 
 
 def check_ping(hostname) -> bool:
@@ -291,11 +238,6 @@ def add_result_missing_check(result: dict, file, key, value):
 
 
 def write_current_state(output_file, result: dict):
-    """
-    Rewrite output_file so it exactly matches the current contents of result.
-    Safe on Linux (atomic replace).
-    """
-
     directory = os.path.dirname(os.path.abspath(output_file)) or "."
 
     # write to a temp file first
@@ -361,6 +303,7 @@ def parse_arguments():
     args = parser.parse_args()
     return args
 
+
 def main():
 
     args = parse_arguments()
@@ -373,10 +316,12 @@ def main():
     timeout = 5
     output_file = Path(f"{hostname}.log")
 
+    # Initialize result dictionary with all needed values
     result = {"Target": url,
               "IP": ip,
               "url": url,
-              "hostname": hostname
+              "hostname": hostname,
+              "speed": speed  # Store speed in result for enumerate_subdomains
             }
     result["Enumerate_subdomain"] = args.nosub
     result["Check_robots"] = args.norobots
@@ -392,15 +337,15 @@ def main():
     else:
         print(YELLOW + "No IP specified detected this", ip + RESET)
 
-    if "https" in url:
+    # Better HTTPS recognition - check if scheme is https or if port 443 is used
+    if parsed_url.scheme == "https" or parsed_url.port == 443:
         HTTPS = True
         print(GREEN + "HTTPS:", str(HTTPS) + RESET)
-        add_result_missing_check(result, output_file, "HTTPS", HTTPS)
+        result["HTTPS"] = HTTPS  # Store in result dictionary
     else:
         HTTPS = False
         print(YELLOW + "HTTPS:", str(HTTPS) + RESET)
-        add_result_missing_check(result, output_file, "HTTPS", HTTPS)
-
+        result["HTTPS"] = HTTPS  # Store in result dictionary
 
     print('Target:', url)
     time.sleep(2)
@@ -412,19 +357,21 @@ def main():
 
 # select function to run
     if result["Enumerate_subdomain"]:
-        enumerate_subdomain(result, url, hostname, ip, HTTPS, speed, timeout)
+        enumerate_subdomains(result, timeout)  # Pass only result dictionary
         write_current_state(output_file, result)
 
     if result["Check_robots"]:
         check_robots(result)
         write_current_state(output_file, result)
+
     sys.exit()
 
-    cypher(url)
-    sys.exit()
-    weightedgrade()
-    sys.exit()
+#    cypher(url)
+#    sys.exit()
+#    weightedgrade()
+#    sys.exit()
 
 if __name__=="__main__":
     main()
+
 
